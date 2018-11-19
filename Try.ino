@@ -4,13 +4,17 @@
 #import <EEPROM.h>
 
 //Define variables
-int clkpin=4;
-int clkinh=5;
-int	serial=3;
-int	shload = 6;
-int interval = 5;
+const int clkpin=4;
+const int clkinh=5;
+const int	serial=3;
+const int	shload = 6;
+const int interval = 5;
 unsigned long initt = 0;
 unsigned long actual = 0;
+const int bank1 = 10;
+const int bank2 = 16;
+const int bank3 = 14;
+const int bank4 = 15;
 
 //Variables for choosing the notes to send
 int baseNote = 48;
@@ -172,6 +176,24 @@ void readAndSendNotes() {
 	}
 }
 
+void readBanks() {
+	if (digitalRead(bank1))
+	{
+		selected_bank = 1;
+	}
+	else if (digitalRead(bank2)) 
+	{
+		selected_bank = 2;
+	}
+	else if (digitalRead(bank3))
+	{
+		selected_bank = 3;
+	}
+	else if (digitalRead(bank4))
+	{
+		selected_bank = 4;
+	}
+}
 
 // The setup() function runs once each time the micro-controller starts
 void setup()
@@ -179,9 +201,14 @@ void setup()
 	Serial.begin(9600);
 	machineList[0] = &nothing;
 	machineList[1] = &readAndSendNotes;
+	machineList[2] = &readBanks;
 	pinMode(clkpin, OUTPUT);
 	pinMode(clkinh, OUTPUT);
 	pinMode(shload, OUTPUT);
+	pinMode(bank1, INPUT);
+	pinMode(bank2, INPUT);
+	pinMode(bank3, INPUT);
+	pinMode(bank4, INPUT);
 	pinMode(serial, INPUT);
 	/*if (EEPROM.read(0) != 0) {
 		Uncomment this part when the user preset part is ready
@@ -197,4 +224,5 @@ void loop()
 {
 	(*machineList[0])();
 	(*machineList[1])();
+	(*machineList[2])();
 }
