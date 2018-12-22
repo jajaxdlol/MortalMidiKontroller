@@ -1,20 +1,49 @@
+/*
+____________
+			|
+			|
+			|
+			|
+			|
+			|
+			|
+			|
+			|
+____________|
+*/
+
+
 //Import libraries
-#import <Wire.h>
-#import "MIDIUSB.h"
-#import <EEPROM.h>
+#include <Wire.h>
+#include "MIDIUSB.h"
+#include <EEPROM.h>
+
 
 //Define variables
+const int ccthresh = 2;
 const int clkpin=4;
 const int clkinh=5;
-const int	serial=3;
-const int	shload = 6;
+const int serial=7;
+const int shload = 6;
 const int interval = 5;
 unsigned long initt = 0;
 unsigned long actual = 0;
-const int bank1 = 10;
+const int bank1 = 8;
 const int bank2 = 16;
 const int bank3 = 14;
 const int bank4 = 15;
+
+//Gyroscope variables
+const int MPU = 0x68;  // I2C address of the MPU-6050
+int AcX, AcY;
+unsigned long machinewait = 0;
+unsigned long machineactual = 0;
+int minVal = -18000;
+int maxVal = 18000;
+int xccval = 64;
+int yccval = 64;
+int antXCCVAL = 64;
+int antYCCVAL = 64;
 
 //Variables for choosing the notes to send
 int baseNote = 48;
@@ -58,7 +87,12 @@ int selected_bank = 1;
 
 //Button states variables
 const int nbuttons = 16;
-int buttons[nbuttons];
+int buttons[] = {  
+0, 0, 0, 0,
+0, 0, 0, 0,
+0, 0, 0, 0,
+0, 0, 0, 0
+};
 int lastbuttonsState[] = {  
 0, 0, 0, 0,
 0, 0, 0, 0,
@@ -90,14 +124,13 @@ void LD() {
 	digitalWrite(shload, HIGH);
 	machineList[0] = &SH;
 }
-// El tiempo está jodiendo de alguna forma la lectura
 void SH() {
 	digitalWrite(clkinh, LOW);
 	delayMicroseconds(5);
-	machineList[0] = &read;
+	machineList[0] = &readButtons;
 }
 
-void read() {
+void readButtons() {
 	reg1 = 0;
 	reg2 = 0;
 
@@ -134,6 +167,7 @@ void controlChange(byte channel, byte control, byte value) {
 	MidiUSB.sendMIDI(event);
 }
 
+
 void getPressedButtons() {
 	byte displ = 1;
 	for (int i = 0; i < nbuttons/2; i++) {
@@ -159,20 +193,40 @@ void getPressedButtons() {
 }
 
 void readAndSendNotes() {
+	MidiUSB.flush();
 	getPressedButtons();
 	for (int i = 0; i < nbuttons; i++) {
 		if (buttons[i] == 1 && lastbuttonsState[i] == 0) {
 			noteOn(0, padnotes[selected_bank][i], 127);
 			MidiUSB.flush();
+      Wire.beginTransmission(10);
+      Wire.write(1);
+      Wire.write(i);
+      Wire.endTransmission();
 		}
 		if (buttons[i] == 0 && lastbuttonsState[i] == 1){
 			noteOff(0, padnotes[selected_bank][i], 127);
 			MidiUSB.flush();
+      Wire.beginTransmission(10);
+      Wire.write(0);
+      Wire.write(i);
+      Wire.endTransmission();
 		}
 	}
 
 	for (int i = 0; i < nbuttons; i++) {
 		lastbuttonsState[i] = buttons[i];
+	}
+
+	if(xccval - antXCCVAL > ccthresh || xccval - antXCCVAL < -ccthresh){
+		controlChange(0, 12, xccval);
+		MidiUSB.flush();
+		antXCCVAL = xccval;
+	}
+	if (yccval - antYCCVAL > ccthresh || yccval - antYCCVAL < -ccthresh) {
+		controlChange(0, 13, yccval);
+		MidiUSB.flush();
+		antYCCVAL = yccval;
 	}
 }
 
@@ -195,13 +249,42 @@ void readBanks() {
 	}
 }
 
+void readGyro() {
+	Wire.beginTransmission(MPU);
+	Wire.write(0x3B);
+	Wire.endTransmission(false);
+	Wire.requestFrom(MPU, 14, true);
+	AcX = Wire.read() << 8 | Wire.read();
+	AcY = Wire.read() << 8 | Wire.read();
+	xccval = map(AcX, minVal, maxVal, 0, 127);
+	yccval = map(AcY, minVal, maxVal, 0, 127);
+	machinewait = micros();
+	machineList[3] = &waitGyro;
+}
+
+void waitGyro() {
+	machineactual = micros();
+	if ((unsigned long)(machineactual - machinewait) >= interval*20)
+		machineList[3] = &readGyro;
+}
+
 // The setup() function runs once each time the micro-controller starts
 void setup()
 {
+	MidiUSB.flush();
+	Wire.begin();
+	Wire.beginTransmission(MPU);
+	Wire.write(0x6B);  // PWR_MGMT_1 register
+	Wire.write(0);     // set to zero (wakes up the MPU-6050)
+	Wire.endTransmission(false);
+	Wire.write(0x6B);  // PWR_MGMT_1 register
+	Wire.write(0);     // set to zero (wakes up the MPU-6050)
+  Wire.endTransmission(true);
 	Serial.begin(9600);
 	machineList[0] = &nothing;
 	machineList[1] = &readAndSendNotes;
 	machineList[2] = &readBanks;
+	machineList[3] = &readGyro;
 	pinMode(clkpin, OUTPUT);
 	pinMode(clkinh, OUTPUT);
 	pinMode(shload, OUTPUT);
@@ -217,12 +300,18 @@ void setup()
 	digitalWrite(clkinh, HIGH);
 	digitalWrite(shload, HIGH);
 	digitalWrite(clkpin, LOW);
+
+  Wire.beginTransmission(10);
+  Wire.write(0);
+  Wire.write(24);
+  Wire.endTransmission();
 }
 
 // Add the main program code into the continuous loop() function
 void loop()
 {
 	(*machineList[0])();
-	(*machineList[1])();
 	(*machineList[2])();
+	(*machineList[3])();
+	(*machineList[1])();
 }
